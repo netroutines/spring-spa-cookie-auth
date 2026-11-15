@@ -4,16 +4,19 @@ import io.github.netroutines.myagenda.auth.dto.RegisterRequest;
 import io.github.netroutines.myagenda.auth.dto.UserResponse;
 import io.github.netroutines.myagenda.user.User;
 import io.github.netroutines.myagenda.user.UserRepository;
+import org.hibernate.exception.ConstraintViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.Locale;
-
 @Service
 public class AuthService {
+
+    private static final Logger logger = LoggerFactory.getLogger(AuthService.class);
 
     private final UserRepository users;
     private final PasswordEncoder passwordEncoder;
@@ -24,9 +27,7 @@ public class AuthService {
     }
 
     public UserResponse register(RegisterRequest request) {
-        var email = request.email()
-            .strip()
-            .toLowerCase(Locale.ROOT);
+        var email = request.email();
 
         if (users.existsByEmail(email)) {
             throw new ResponseStatusException(
@@ -61,10 +62,19 @@ public class AuthService {
         try {
             return UserResponse.from(users.saveAndFlush(user));
         } catch (DataIntegrityViolationException exception) {
+            for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+                if (cause instanceof ConstraintViolationException violation
+                    && "23505".equals(violation.getSQLState())
+                    && "uk_users_email".equals(violation.getConstraintName())) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already registered");
+                }
+            }
+
+            // Database exception details may contain the entire row, including its password hash.
+            logger.error("Account creation failed due to a database integrity violation");
             throw new ResponseStatusException(
-                HttpStatus.CONFLICT,
-                "Could not create account",
-                exception
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "Could not create account"
             );
         }
     }

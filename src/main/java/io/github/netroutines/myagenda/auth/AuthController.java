@@ -4,8 +4,11 @@ import io.github.netroutines.myagenda.auth.dto.RegisterRequest;
 import io.github.netroutines.myagenda.auth.dto.UserResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -34,5 +37,11 @@ public class AuthController {
         return authService.currentUser(
             authentication.getName()
         );
+    }
+
+    // Default MVC validation logging can include the rejected password value.
+    @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class})
+    public ResponseEntity<Void> invalidRequest() {
+        return ResponseEntity.badRequest().build();
     }
 }
