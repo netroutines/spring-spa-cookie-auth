@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.web.server.Cookie.SameSite;
@@ -17,9 +18,14 @@ import org.springframework.boot.web.server.autoconfigure.ServerProperties;
 import org.springframework.boot.web.server.servlet.Session;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationContext;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.json.JsonMapper;
@@ -100,7 +106,7 @@ class MyAgendaApplicationTests {
         assertNotNull(registeredUser);
         assertThat(registeredUser.getPasswordHash()).startsWith("$argon2id$").isNotEqualTo(password);
 
-        var login = mvc.perform(post("/api/auth/login").cookie(beforeLogin)
+        var login = mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded").cookie(beforeLogin)
                 .header("X-XSRF-TOKEN", beforeLogin.getValue())
                 .param("email", " ALICE@Example.COM ").param("password", password))
             .andExpect(status().isNoContent()).andExpect(content().string(""))
@@ -109,6 +115,7 @@ class MyAgendaApplicationTests {
 
         mvc.perform(get("/api/auth/me").session(session))
             .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
             .andExpect(content().json("""
                 {"id":42,"email":"alice@example.com","name":"alice"}
                 """))
@@ -121,6 +128,7 @@ class MyAgendaApplicationTests {
         assertThat(afterLogin.getValue()).isNotBlank();
         assertThat(afterLogin.getMaxAge()).isNotZero();
         assertThat(afterLogin.getValue()).isNotEqualTo(beforeLogin.getValue());
+        var authenticatedSessionId = session.getId();
         mvc.perform(post("/api/auth/logout").session(session).cookie(afterLogin)
                 .header("X-XSRF-TOKEN", beforeLogin.getValue()))
             .andExpect(status().isForbidden());
@@ -133,14 +141,22 @@ class MyAgendaApplicationTests {
             .andExpect(cookie().maxAge("XSRF-TOKEN", 0));
         assertThat(session.isInvalid()).isTrue();
         mvc.perform(get("/api/auth/me")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/auth/me").session(session)
+                .cookie(new Cookie("JSESSIONID", authenticatedSessionId)))
+            .andExpect(status().isUnauthorized()).andExpect(unauthenticated());
+        // Cookie CSRF tokens are stateless. Replaying a matching old pair cannot restore authentication.
+        mvc.perform(post("/api/private").session(session)
+                .cookie(new Cookie("JSESSIONID", authenticatedSessionId), afterLogin)
+                .header("X-XSRF-TOKEN", afterLogin.getValue()))
+            .andExpect(status().isUnauthorized()).andExpect(unauthenticated());
 
         var afterLogout = fetchCsrf();
         assertThat(afterLogout.getValue()).isNotEqualTo(afterLogin.getValue());
-        mvc.perform(post("/api/auth/login").cookie(afterLogout)
+        mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded").cookie(afterLogout)
                 .header("X-XSRF-TOKEN", afterLogin.getValue())
                 .param("email", "alice@example.com").param("password", password))
             .andExpect(status().isForbidden());
-        mvc.perform(post("/api/auth/login").cookie(afterLogout)
+        mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded").cookie(afterLogout)
                 .header("X-XSRF-TOKEN", afterLogout.getValue())
                 .param("email", "alice@example.com").param("password", password))
             .andExpect(status().isNoContent()).andExpect(authenticated());
@@ -163,13 +179,17 @@ class MyAgendaApplicationTests {
         var masked = token.asString();
         assertThat(masked).isNotBlank().isNotEqualTo(raw.getValue());
 
-        mvc.perform(post("/api/auth/login").cookie(raw).header("X-XSRF-TOKEN", masked)
+        mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded").cookie(raw).header("X-XSRF-TOKEN", masked)
                 .param("email", "alice@example.com").param("password", "password123"))
             .andExpect(status().isForbidden());
-        mvc.perform(post("/api/auth/login").cookie(raw).param("_csrf", raw.getValue())
+        mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded").cookie(raw).param("_csrf", raw.getValue())
                 .param("email", "alice@example.com").param("password", "password123"))
             .andExpect(status().isForbidden());
-        mvc.perform(post("/api/auth/login").cookie(raw).param("_csrf", masked)
+        mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded").cookie(raw)
+                .header("X-XSRF-TOKEN", "invalid").param("_csrf", masked)
+                .param("email", "alice@example.com").param("password", "password123"))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded").cookie(raw).param("_csrf", masked)
                 .param("email", "alice@example.com").param("password", "password123"))
             .andExpect(status().isNoContent()).andExpect(authenticated());
     }
@@ -210,7 +230,7 @@ class MyAgendaApplicationTests {
     void retainsTheCsrfTokenAfterAnUnsuccessfulLogin() throws Exception {
         var csrf = register("password123");
 
-        var result = mvc.perform(post("/api/auth/login").cookie(csrf)
+        var result = mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded").cookie(csrf)
                 .header("X-XSRF-TOKEN", csrf.getValue())
                 .param("email", "alice@example.com").param("password", "wrong-password"))
             .andExpect(status().isUnauthorized()).andReturn();
@@ -220,7 +240,7 @@ class MyAgendaApplicationTests {
                 assertThat(cookie.getName()).isEqualTo("XSRF-TOKEN");
                 assertThat(cookie.getMaxAge()).isZero();
             });
-        mvc.perform(post("/api/auth/login").cookie(csrf)
+        mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded").cookie(csrf)
                 .header("X-XSRF-TOKEN", csrf.getValue())
                 .param("email", "alice@example.com").param("password", "password123"))
             .andExpect(status().isNoContent()).andExpect(authenticated());
@@ -244,19 +264,102 @@ class MyAgendaApplicationTests {
             .andExpect(cookie().httpOnly("XSRF-TOKEN", false));
     }
 
+    @Test
+    void ignoresUnknownRegistrationFieldsWithoutGrantingAuthorityOrChangingTheId() throws Exception {
+        var csrf = fetchCsrf();
+        mvc.perform(post("/api/auth/register").cookie(csrf).header("X-XSRF-TOKEN", csrf.getValue())
+                .contentType("application/json").content("""
+                    {"email":"alice@example.com","password":"secret-password","id":1,
+                     "roles":["ADMIN"],"passwordHash":"attacker-controlled","enabled":true}
+                    """))
+            .andExpect(status().isCreated())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(content().json("""
+                {"email":"alice@example.com","status":"registered"}
+                """, JsonCompareMode.STRICT));
+        var registeredUser = storedUser;
+        assertNotNull(registeredUser);
+        assertThat(registeredUser.getId()).isEqualTo(42L);
+
+        var result = mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded")
+                .cookie(csrf).header("X-XSRF-TOKEN", csrf.getValue())
+                .param("email", "alice@example.com").param("password", "secret-password"))
+            .andExpect(status().isNoContent()).andExpect(authenticated().withRoles("USER")).andReturn();
+        var session = assertInstanceOf(MockHttpSession.class, result.getRequest().getSession(false));
+        var securityContext = assertInstanceOf(SecurityContext.class,
+            session.getAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY));
+        var authentication = securityContext.getAuthentication();
+        assertNotNull(authentication);
+        var principal = assertInstanceOf(UserDetails.class, authentication.getPrincipal());
+        assertThat(principal.getPassword()).isNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"<script>alert('x')</script>", "Robert'); DROP TABLE users;--"})
+    void treatsDisplayNamesAsJsonDataWithoutInterpretingMarkupOrSql(String name) throws Exception {
+        var csrf = fetchCsrf();
+        mvc.perform(post("/api/auth/register").cookie(csrf).header("X-XSRF-TOKEN", csrf.getValue())
+                .contentType("application/json")
+                .content(json.writeValueAsString(new RegisterRequest("alice@example.com", name, "secret-password"))))
+            .andExpect(status().isCreated())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(content().json("""
+                {"email":"alice@example.com","status":"registered"}
+                """, JsonCompareMode.STRICT));
+        var user = storedUser;
+        assertNotNull(user);
+        assertThat(user.getName()).isEqualTo(name);
+
+        var login = mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded")
+                .cookie(csrf).header("X-XSRF-TOKEN", csrf.getValue())
+                .param("email", "alice@example.com").param("password", "secret-password"))
+            .andExpect(status().isNoContent()).andExpect(authenticated()).andReturn();
+        var session = assertInstanceOf(MockHttpSession.class, login.getRequest().getSession(false));
+        mvc.perform(get("/api/auth/me").session(session))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+            .andExpect(jsonPath("$.name").value(name));
+    }
+
+    @Test
+    void doesNotRestoreAuthenticationFromAnInvalidatedSessionOrItsOldCookie() throws Exception {
+        var csrf = register("secret-password");
+        var result = mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded")
+                .cookie(csrf).header("X-XSRF-TOKEN", csrf.getValue())
+                .param("email", "alice@example.com").param("password", "secret-password"))
+            .andExpect(status().isNoContent()).andReturn();
+        var session = assertInstanceOf(MockHttpSession.class, result.getRequest().getSession(false));
+        var oldId = session.getId();
+        // Simulate container invalidation at timeout; MockMvc itself does not run an expiry timer.
+        session.invalidate();
+
+        mvc.perform(get("/api/auth/me").session(session).cookie(new Cookie("JSESSIONID", oldId)))
+            .andExpect(status().isUnauthorized()).andExpect(unauthenticated());
+        assertThat(session.isInvalid()).isTrue();
+    }
+
     private Cookie register(String password) throws Exception {
         var csrf = fetchCsrf();
         var result = mvc.perform(post("/api/auth/register").cookie(csrf)
                 .header("X-XSRF-TOKEN", csrf.getValue()).contentType("application/json")
                 .content(json.writeValueAsString(new RegisterRequest(" ALICE@Example.COM ", null, password))))
-            .andExpect(status().isCreated()).andReturn();
+            .andExpect(status().isCreated())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(content().json("""
+                {"email":"alice@example.com","status":"registered"}
+                """, JsonCompareMode.STRICT))
+            .andExpect(unauthenticated())
+            .andExpect(header().doesNotExist("Location"))
+            .andReturn();
         assertThat(result.getResponse().getContentAsString()).doesNotContain(password, "passwordHash", "$argon2id$");
         return csrf;
     }
 
     private Cookie fetchCsrf() throws Exception {
-        var result = mvc.perform(get("/api/auth/csrf"))
+        var result = mvc.perform(get("/api/auth/csrf").accept(MediaType.APPLICATION_JSON))
             .andExpect(status().isOk())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
             .andExpect(cookie().httpOnly("XSRF-TOKEN", false))
             .andExpect(cookie().path("XSRF-TOKEN", "/"))
             .andReturn();

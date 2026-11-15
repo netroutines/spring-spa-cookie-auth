@@ -47,6 +47,14 @@ class RegisterRequestTest {
     }
 
     @Test
+    void acceptsQuotedLocalPartsContainingAnAtSign() {
+        var request = new RegisterRequest("\"Alice@Home\"@example.com", null, "password123");
+
+        assertThat(validator.validate(request)).isEmpty();
+        assertThat(request.email()).isEqualTo("\"alice@home\"@example.com");
+    }
+
+    @Test
     void acceptsTheMaximumEmailLength() {
         var email = emailWithLength254();
 

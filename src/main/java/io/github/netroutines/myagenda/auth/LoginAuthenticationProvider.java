@@ -3,6 +3,7 @@ package io.github.netroutines.myagenda.auth;
 import io.github.netroutines.myagenda.auth.dto.RegisterRequest;
 import org.jspecify.annotations.NullMarked;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.InternalAuthenticationServiceException;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -31,6 +32,11 @@ final class LoginAuthenticationProvider extends DaoAuthenticationProvider {
             throw new BadCredentialsException("Invalid credentials");
         }
 
-        return super.authenticate(authentication);
+        try {
+            return super.authenticate(authentication);
+        } catch (InternalAuthenticationServiceException exception) {
+            // The form-login filter logs this exception. Do not retain a database cause or message.
+            throw new InternalAuthenticationServiceException("Authentication service unavailable");
+        }
     }
 }

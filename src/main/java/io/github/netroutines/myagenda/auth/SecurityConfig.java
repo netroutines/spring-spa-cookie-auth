@@ -1,12 +1,14 @@
 package io.github.netroutines.myagenda.auth;
 
 import io.github.netroutines.myagenda.user.UserRepository;
+import io.github.netroutines.myagenda.web.ApiErrors;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -16,7 +18,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 import java.util.Locale;
 
@@ -26,22 +28,19 @@ public class SecurityConfig {
 
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8();
+        // OWASP minimum for Argon2id: 19 MiB, two iterations, parallelism one.
+        return new Argon2PasswordEncoder(16, 32, 1, 19 * 1024, 2);
     }
 
     @Bean
     public UserDetailsService userDetailsService(UserRepository users) {
-        return email -> users.findByEmail(
-                email.strip().toLowerCase(Locale.ROOT)
-            )
+        return email -> users.findByEmail(email.strip().toLowerCase(Locale.ROOT))
             .map(user -> org.springframework.security.core.userdetails.User
                 .withUsername(user.getEmail())
                 .password(user.getPasswordHash())
                 .roles("USER")
                 .build())
-            .orElseThrow(() ->
-                new UsernameNotFoundException("Invalid credentials")
-            );
+            .orElseThrow(() -> new UsernameNotFoundException("Invalid credentials"));
     }
 
     @Bean
@@ -55,10 +54,11 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, ApiErrors errors) {
 
         http
             .csrf(CsrfConfigurer::spa)
+            .addFilterBefore(new LoginRequestFilter(errors), UsernamePasswordAuthenticationFilter.class)
 
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.GET, "/api/auth/csrf")
@@ -72,9 +72,8 @@ public class SecurityConfig {
             )
 
             .exceptionHandling(exceptions -> exceptions
-                .authenticationEntryPoint(
-                    new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)
-                )
+                .authenticationEntryPoint((_, response, _) -> errors.write(response, HttpStatus.UNAUTHORIZED))
+                .accessDeniedHandler((_, response, _) -> errors.write(response, HttpStatus.FORBIDDEN))
             )
 
             .formLogin(login -> login
@@ -85,9 +84,9 @@ public class SecurityConfig {
                 .successHandler((_, response, _) ->
                     response.setStatus(HttpServletResponse.SC_NO_CONTENT)
                 )
-                .failureHandler((_, response, _) ->
-                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED)
-                )
+                .failureHandler((_, response, exception) -> errors.write(response,
+                    exception instanceof AuthenticationServiceException
+                        ? HttpStatus.INTERNAL_SERVER_ERROR : HttpStatus.UNAUTHORIZED))
                 .permitAll()
             )
 

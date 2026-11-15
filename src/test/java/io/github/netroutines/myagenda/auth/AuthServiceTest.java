@@ -1,6 +1,7 @@
 package io.github.netroutines.myagenda.auth;
 
 import io.github.netroutines.myagenda.auth.dto.RegisterRequest;
+import io.github.netroutines.myagenda.auth.dto.RegisterResponse;
 import io.github.netroutines.myagenda.auth.dto.UserResponse;
 import io.github.netroutines.myagenda.user.User;
 import io.github.netroutines.myagenda.user.UserRepository;
@@ -53,7 +54,7 @@ class AuthServiceTest {
         assertThat(saved.getValue().getEmail()).isEqualTo("alice@example.com");
         assertThat(saved.getValue().getName()).isEqualTo("Alice Ionescu");
         assertThat(saved.getValue().getPasswordHash()).isEqualTo("encoded-password");
-        assertThat(response).isEqualTo(new UserResponse(42L, "alice@example.com", "Alice Ionescu"));
+        assertThat(response).isEqualTo(new RegisterResponse("alice@example.com", "registered"));
         verify(passwordEncoder).encode(password);
         verify(users).existsByEmail("alice@example.com");
     }
@@ -66,7 +67,9 @@ class AuthServiceTest {
 
         var response = authService.register(new RegisterRequest("Alice@Example.com", name, "password123"));
 
-        assertThat(response.name()).isEqualTo("alice");
+        var saved = ArgumentCaptor.forClass(User.class);
+        verify(users).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getName()).isEqualTo("alice");
         assertThat(response.email()).isEqualTo("alice@example.com");
     }
 
@@ -80,6 +83,17 @@ class AuthServiceTest {
 
         verifyNoInteractions(passwordEncoder);
         verify(users, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void derivesTheCompleteLocalPartForAQuotedEmailContainingAnAtSign() {
+        givenSuccessfulSave("password123");
+
+        authService.register(new RegisterRequest("\"Alice@Home\"@example.com", null, "password123"));
+
+        var saved = ArgumentCaptor.forClass(User.class);
+        verify(users).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getName()).isEqualTo("\"alice@home\"");
     }
 
     @Test

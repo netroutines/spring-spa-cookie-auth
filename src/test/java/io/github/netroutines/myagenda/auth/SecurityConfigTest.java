@@ -3,6 +3,8 @@ package io.github.netroutines.myagenda.auth;
 import io.github.netroutines.myagenda.SpaController;
 import io.github.netroutines.myagenda.user.User;
 import io.github.netroutines.myagenda.user.UserRepository;
+import io.github.netroutines.myagenda.web.ApiErrors;
+import io.github.netroutines.myagenda.web.ApiJsonConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -17,10 +19,12 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestBuilders.FormLoginRequestBuilder;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 
 import java.util.Optional;
 
@@ -39,7 +43,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest({AuthController.class, SpaController.class})
-@Import({SecurityConfig.class, AuthService.class})
+@Import({SecurityConfig.class, AuthService.class, ApiErrors.class, ApiJsonConfiguration.class})
 @ActiveProfiles("test")
 class SecurityConfigTest {
 
@@ -100,7 +104,7 @@ class SecurityConfigTest {
     void authenticatesThroughTheRealProviderAndPreservesTheSession(String password) throws Exception {
         givenUser(password);
 
-        var result = mvc.perform(formLogin("/api/auth/login")
+        var result = performFormLogin(formLogin("/api/auth/login")
                 .user("email", " ALICE@Example.COM ").password(password))
             .andExpect(status().isNoContent())
             .andExpect(authenticated().withUsername("alice@example.com"))
@@ -128,7 +132,8 @@ class SecurityConfigTest {
         var originalId = session.getId();
         session.setAttribute("preLoginPreference", "value");
 
-        mvc.perform(post("/api/auth/login").session(session).with(csrf()).with(request -> {
+        mvc.perform(post("/api/auth/login").contentType("application/x-www-form-urlencoded")
+                .session(session).with(csrf()).with(request -> {
                     request.setRequestedSessionId(originalId);
                     request.setRequestedSessionIdValid(true);
                     return request;
@@ -146,10 +151,11 @@ class SecurityConfigTest {
         givenUser("password123");
 
         for (var email : new String[]{"alice@example.com", "unknown@example.com"}) {
-            mvc.perform(formLogin("/api/auth/login").user("email", email).password("wrong-password"))
+            performFormLogin(formLogin("/api/auth/login").user("email", email).password("wrong-password"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(unauthenticated())
-                .andExpect(content().string(""))
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.detail").value("Authentication is required or the credentials are invalid."))
                 .andExpect(header().doesNotExist("Location"));
             verify(users).findByEmail(email);
         }
@@ -159,11 +165,11 @@ class SecurityConfigTest {
     void usesTheEmailFormParameterAndDoesNotTreatJsonOrHttpBasicAsFormLogin() throws Exception {
         givenUser("password123");
 
-        mvc.perform(formLogin("/api/auth/login").user("alice@example.com").password("password123"))
+        performFormLogin(formLogin("/api/auth/login").user("alice@example.com").password("password123"))
             .andExpect(status().isUnauthorized()).andExpect(unauthenticated());
         mvc.perform(post("/api/auth/login").with(csrf()).contentType("application/json")
                 .content("{\"email\":\"alice@example.com\",\"password\":\"password123\"}"))
-            .andExpect(status().isUnauthorized()).andExpect(unauthenticated());
+            .andExpect(status().isUnsupportedMediaType()).andExpect(unauthenticated());
         mvc.perform(get("/api/auth/me").with(httpBasic("alice@example.com", "password123")))
             .andExpect(status().isUnauthorized());
     }
@@ -171,7 +177,7 @@ class SecurityConfigTest {
     @ParameterizedTest
     @ValueSource(ints = {0, 7, 1025, 100000})
     void rejectsOutOfRangePasswordsBeforeAccessingTheRepository(int length) throws Exception {
-        mvc.perform(formLogin("/api/auth/login").user("email", "alice@example.com")
+        performFormLogin(formLogin("/api/auth/login").user("email", "alice@example.com")
                 .password("p".repeat(length)))
             .andExpect(status().isUnauthorized())
             .andExpect(unauthenticated());
@@ -181,7 +187,7 @@ class SecurityConfigTest {
 
     @Test
     void rejectsOversizedEmailBeforeAccessingTheRepository() throws Exception {
-        mvc.perform(formLogin("/api/auth/login").user("email", "a".repeat(255) + "@example.com")
+        performFormLogin(formLogin("/api/auth/login").user("email", "a".repeat(255) + "@example.com")
                 .password("password123"))
             .andExpect(status().isUnauthorized())
             .andExpect(unauthenticated());
@@ -192,7 +198,7 @@ class SecurityConfigTest {
     @Test
     void logsOutAndInvalidatesTheAuthenticatedSession() throws Exception {
         givenUser("password123");
-        var login = mvc.perform(formLogin("/api/auth/login").user("email", "alice@example.com")
+        var login = performFormLogin(formLogin("/api/auth/login").user("email", "alice@example.com")
                 .password("password123"))
             .andExpect(status().isNoContent()).andReturn();
         var session = assertInstanceOf(MockHttpSession.class, login.getRequest().getSession(false));
@@ -213,7 +219,7 @@ class SecurityConfigTest {
     @Test
     void aGetRequestDoesNotLogOutTheSession() throws Exception {
         givenUser("password123");
-        var login = mvc.perform(formLogin("/api/auth/login").user("email", "alice@example.com")
+        var login = performFormLogin(formLogin("/api/auth/login").user("email", "alice@example.com")
                 .password("password123"))
             .andExpect(status().isNoContent()).andReturn();
         var session = assertInstanceOf(MockHttpSession.class, login.getRequest().getSession(false));
@@ -227,5 +233,14 @@ class SecurityConfigTest {
     private void givenUser(String password) {
         when(users.findByEmail("alice@example.com"))
             .thenReturn(Optional.of(new User("Alice", "alice@example.com", encoder.encode(password))));
+    }
+
+    private ResultActions performFormLogin(FormLoginRequestBuilder login) throws Exception {
+        // Spring Security's test builder sets parameters but omits the HTTP form Content-Type.
+        return mvc.perform(servletContext -> {
+            var request = login.buildRequest(servletContext);
+            request.setContentType("application/x-www-form-urlencoded");
+            return request;
+        });
     }
 }

@@ -20,7 +20,7 @@ class PasswordEncoderTest {
         var hash = encoder.encode(password);
         var anotherHash = encoder.encode(password);
 
-        assertThat(hash).startsWith("$argon2id$v=19$m=16384,t=2,p=1$");
+        assertThat(hash).startsWith("$argon2id$v=19$m=19456,t=2,p=1$");
         assertThat(hash).hasSizeLessThanOrEqualTo(255).isNotEqualTo(anotherHash);
         assertThat(encoder.matches(password, hash)).isTrue();
         assertThat(encoder.matches(password, anotherHash)).isTrue();

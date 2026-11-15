@@ -1,6 +1,7 @@
 package io.github.netroutines.myagenda.auth;
 
 import io.github.netroutines.myagenda.auth.dto.RegisterRequest;
+import io.github.netroutines.myagenda.auth.dto.RegisterResponse;
 import io.github.netroutines.myagenda.auth.dto.UserResponse;
 import io.github.netroutines.myagenda.user.User;
 import io.github.netroutines.myagenda.user.UserRepository;
@@ -16,6 +17,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class AuthService {
 
+    private static final String UNIQUE_VIOLATION_SQLSTATE = "23505";
+    private static final String EMAIL_UNIQUE_CONSTRAINT = "uk_users_email";
     private static final Logger logger = LoggerFactory.getLogger(AuthService.class);
 
     private final UserRepository users;
@@ -26,66 +29,50 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
     }
 
-    public UserResponse register(RegisterRequest request) {
+    public RegisterResponse register(RegisterRequest request) {
         var email = request.email();
 
         if (users.existsByEmail(email)) {
-            throw new ResponseStatusException(
-                HttpStatus.CONFLICT,
-                "Email already registered"
-            );
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already registered");
         }
 
-        var name = request.name() == null
-            ? ""
-            : request.name().strip();
+        var name = request.name() == null ? "" : request.name().strip();
 
         if (name.isEmpty()) {
-            var atIndex = email.indexOf('@');
+            var atIndex = email.lastIndexOf('@');
 
             if (atIndex <= 0) {
-                throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Invalid email address"
-                );
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid email address");
             }
 
             name = email.substring(0, atIndex);
         }
 
-        var user = new User(
-            name,
-            email,
-            passwordEncoder.encode(request.password())
-        );
+        var user = new User(name, email, passwordEncoder.encode(request.password()));
 
         try {
-            return UserResponse.from(users.saveAndFlush(user));
+            var savedUser = users.saveAndFlush(user);
+            return new RegisterResponse(savedUser.getEmail(), "registered");
         } catch (DataIntegrityViolationException exception) {
             for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
                 if (cause instanceof ConstraintViolationException violation
-                    && "23505".equals(violation.getSQLState())
-                    && "uk_users_email".equals(violation.getConstraintName())) {
+                    && UNIQUE_VIOLATION_SQLSTATE.equals(violation.getSQLState())
+                    && EMAIL_UNIQUE_CONSTRAINT.equals(violation.getConstraintName())) {
                     throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already registered");
                 }
             }
 
             // Database exception details may contain the entire row, including its password hash.
             logger.error("Account creation failed due to a database integrity violation");
-            throw new ResponseStatusException(
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                "Could not create account"
-            );
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not create account");
         }
     }
 
     public UserResponse currentUser(String email) {
-        var user = users.findByEmail(email)
-            .orElseThrow(() -> new ResponseStatusException(
-                HttpStatus.UNAUTHORIZED,
-                "User not found"
-            ));
-
-        return UserResponse.from(user);
+        return UserResponse.from(
+            users.findByEmail(email).orElseThrow(
+                () -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found")
+            )
+        );
     }
 }
