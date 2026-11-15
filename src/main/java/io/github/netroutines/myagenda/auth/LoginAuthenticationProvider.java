@@ -1,6 +1,7 @@
 package io.github.netroutines.myagenda.auth;
 
 import io.github.netroutines.myagenda.auth.dto.RegisterRequest;
+import org.jspecify.annotations.NullMarked;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.core.Authentication;
@@ -8,6 +9,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 
 import java.util.Locale;
 
+@NullMarked
 final class LoginAuthenticationProvider extends DaoAuthenticationProvider {
 
     LoginAuthenticationProvider(UserDetailsService userDetailsService) {

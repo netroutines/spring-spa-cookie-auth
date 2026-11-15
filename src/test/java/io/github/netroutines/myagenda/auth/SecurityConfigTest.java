@@ -10,8 +10,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.test.context.ActiveProfiles;
@@ -21,6 +25,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestBuilders.formLogin;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestBuilders.logout;
@@ -43,8 +49,23 @@ class SecurityConfigTest {
     @Autowired
     private PasswordEncoder encoder;
 
+    @Autowired
+    private AuthenticationConfiguration authenticationConfiguration;
+
+    @Autowired
+    private AuthenticationProvider authenticationProvider;
+
     @MockitoBean
     private UserRepository users;
+
+    @Test
+    void configuresOnlyTheApplicationProviderWithArgon2() throws Exception {
+        var manager = assertInstanceOf(ProviderManager.class, authenticationConfiguration.getAuthenticationManager());
+
+        assertThat(manager.getProviders()).containsExactly(authenticationProvider);
+        assertInstanceOf(LoginAuthenticationProvider.class, authenticationProvider);
+        assertInstanceOf(Argon2PasswordEncoder.class, encoder);
+    }
 
     @ParameterizedTest
     @ValueSource(strings = {"/login", "/register", "/app"})
@@ -85,12 +106,14 @@ class SecurityConfigTest {
             .andExpect(authenticated().withUsername("alice@example.com"))
             .andExpect(content().string(""))
             .andReturn();
-        var session = (MockHttpSession) result.getRequest().getSession(false);
-        assertThat(session).isNotNull();
-        var context = (SecurityContext) session.getAttribute(
-            HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY);
-        assertThat(context.getAuthentication().getCredentials()).isNull();
-        assertThat(((UserDetails) context.getAuthentication().getPrincipal()).getPassword()).isNull();
+        var session = assertInstanceOf(MockHttpSession.class, result.getRequest().getSession(false));
+        var context = assertInstanceOf(SecurityContext.class, session.getAttribute(
+            HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY));
+        var authentication = context.getAuthentication();
+        assertNotNull(authentication);
+        assertThat(authentication.getCredentials()).isNull();
+        var principal = assertInstanceOf(UserDetails.class, authentication.getPrincipal());
+        assertThat(principal.getPassword()).isNull();
 
         mvc.perform(get("/api/auth/me").session(session))
             .andExpect(status().isOk())
@@ -134,6 +157,8 @@ class SecurityConfigTest {
 
     @Test
     void usesTheEmailFormParameterAndDoesNotTreatJsonOrHttpBasicAsFormLogin() throws Exception {
+        givenUser("password123");
+
         mvc.perform(formLogin("/api/auth/login").user("alice@example.com").password("password123"))
             .andExpect(status().isUnauthorized()).andExpect(unauthenticated());
         mvc.perform(post("/api/auth/login").with(csrf()).contentType("application/json")
@@ -170,7 +195,7 @@ class SecurityConfigTest {
         var login = mvc.perform(formLogin("/api/auth/login").user("email", "alice@example.com")
                 .password("password123"))
             .andExpect(status().isNoContent()).andReturn();
-        var session = (MockHttpSession) login.getRequest().getSession(false);
+        var session = assertInstanceOf(MockHttpSession.class, login.getRequest().getSession(false));
 
         mvc.perform(servletContext -> {
                 var request = logout("/api/auth/logout").buildRequest(servletContext);
@@ -191,7 +216,7 @@ class SecurityConfigTest {
         var login = mvc.perform(formLogin("/api/auth/login").user("email", "alice@example.com")
                 .password("password123"))
             .andExpect(status().isNoContent()).andReturn();
-        var session = (MockHttpSession) login.getRequest().getSession(false);
+        var session = assertInstanceOf(MockHttpSession.class, login.getRequest().getSession(false));
 
         mvc.perform(get("/api/auth/logout").session(session)).andExpect(status().isNotFound());
 

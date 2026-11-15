@@ -31,6 +31,8 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mockingDetails;
@@ -94,15 +96,16 @@ class MyAgendaApplicationTests {
     void registersLogsInReadsTheUserAndLogsOutUsingRealCsrfCookies(String password) throws Exception {
         var beforeLogin = register(password);
         mvc.perform(get("/api/auth/me")).andExpect(status().isUnauthorized());
-        assertThat(storedUser.getPasswordHash()).startsWith("$argon2id$").isNotEqualTo(password);
+        var registeredUser = storedUser;
+        assertNotNull(registeredUser);
+        assertThat(registeredUser.getPasswordHash()).startsWith("$argon2id$").isNotEqualTo(password);
 
         var login = mvc.perform(post("/api/auth/login").cookie(beforeLogin)
                 .header("X-XSRF-TOKEN", beforeLogin.getValue())
                 .param("email", " ALICE@Example.COM ").param("password", password))
             .andExpect(status().isNoContent()).andExpect(content().string(""))
             .andExpect(authenticated().withUsername("alice@example.com")).andReturn();
-        var session = (MockHttpSession) login.getRequest().getSession(false);
-        assertThat(session).isNotNull();
+        var session = assertInstanceOf(MockHttpSession.class, login.getRequest().getSession(false));
 
         mvc.perform(get("/api/auth/me").session(session))
             .andExpect(status().isOk())
@@ -155,7 +158,9 @@ class MyAgendaApplicationTests {
             .andExpect(jsonPath("$.headerName").value("X-XSRF-TOKEN"))
             .andExpect(jsonPath("$.parameterName").value("_csrf"))
             .andReturn().getResponse();
-        var masked = json.readTree(response.getContentAsString()).get("token").asString();
+        var token = json.readTree(response.getContentAsString()).get("token");
+        assertNotNull(token);
+        var masked = token.asString();
         assertThat(masked).isNotBlank().isNotEqualTo(raw.getValue());
 
         mvc.perform(post("/api/auth/login").cookie(raw).header("X-XSRF-TOKEN", masked)
@@ -186,14 +191,18 @@ class MyAgendaApplicationTests {
     @Test
     void returnsConflictForARepeatedRegistration() throws Exception {
         var csrf = register("password123");
-        var originalHash = storedUser.getPasswordHash();
+        var originalUser = storedUser;
+        assertNotNull(originalUser);
+        var originalHash = originalUser.getPasswordHash();
 
         var result = mvc.perform(post("/api/auth/register").cookie(csrf)
                 .header("X-XSRF-TOKEN", csrf.getValue()).contentType("application/json")
                 .content(json.writeValueAsString(new RegisterRequest("ALICE@EXAMPLE.COM", "Other", "different-password"))))
             .andExpect(status().isConflict()).andReturn();
 
-        assertThat(storedUser.getPasswordHash()).isEqualTo(originalHash);
+        var currentUser = storedUser;
+        assertNotNull(currentUser);
+        assertThat(currentUser.getPasswordHash()).isEqualTo(originalHash);
         assertThat(result.getResponse().getContentAsString()).doesNotContain(originalHash, "different-password");
     }
 
@@ -253,7 +262,7 @@ class MyAgendaApplicationTests {
             .andReturn();
         assertThat(result.getResponse().getHeader("Cache-Control")).contains("no-store");
         var token = result.getResponse().getCookie("XSRF-TOKEN");
-        assertThat(token).isNotNull();
+        assertNotNull(token);
         assertThat(token.getValue()).isNotBlank();
         return token;
     }

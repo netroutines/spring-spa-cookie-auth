@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import org.jspecify.annotations.NonNull;
 
 import java.util.Locale;
 
@@ -34,7 +35,7 @@ public record RegisterRequest(
     }
 
     @Override
-    public String toString() {
+    public @NonNull String toString() {
         return "RegisterRequest[email=" + email + ", name=" + name + ", password=[REDACTED]]";
     }
 }
