@@ -8,3 +8,4 @@
 
 # Preserve generated frontend assets exactly
 /src/main/resources/static/** -text
+src/main/resources/static/assets/*.js -diff
