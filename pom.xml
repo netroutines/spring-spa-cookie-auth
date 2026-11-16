@@ -4,14 +4,17 @@
 
   <modelVersion>4.0.0</modelVersion>
 
-  <name>MyAgenda</name>
-  <description />
+  <name>Spring SPA Cookie Authentication</name>
+  <description>
+    Reference implementation of session-based authentication for a first-party React SPA using Spring Boot, Spring
+    Security, HttpOnly cookies, CSRF protection, PostgreSQL, and Mantine.
+  </description>
   <groupId>io.github.netroutines</groupId>
-  <artifactId>my-agenda</artifactId>
+  <artifactId>spring-spa-cookie-auth</artifactId>
   <version>0.0.1-SNAPSHOT</version>
   <packaging>jar</packaging>
 
-  <url>https://github.com/netroutines/my-agenda</url>
+  <url>https://github.com/netroutines/spring-spa-cookie-auth</url>
 
   <properties>
     <java.version>25</java.version>
@@ -116,7 +119,9 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
-          <argLine>-javaagent:"${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar"</argLine>
+          <argLine>
+            -javaagent:"${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar"
+          </argLine>
         </configuration>
       </plugin>
     </plugins>

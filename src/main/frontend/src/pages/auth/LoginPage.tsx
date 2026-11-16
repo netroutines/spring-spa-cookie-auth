@@ -49,7 +49,7 @@ export default function LoginPage() {
 
   return (
     <>
-      <title>Login | My Agenda</title>
+      <title>Login | Spring SPA Cookie Authentication</title>
       <Card withBorder radius="md" p={{ base: 'lg', sm: 'xl' }}>
         <Stack gap="lg">
           <Title order={1} size="h2">Login</Title>

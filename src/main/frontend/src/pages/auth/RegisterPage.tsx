@@ -48,7 +48,7 @@ export default function RegisterPage() {
 
   return (
     <>
-      <title>Register | My Agenda</title>
+      <title>Register | Spring SPA Cookie Authentication</title>
       <Card withBorder radius="md" p={{ base: 'lg', sm: 'xl' }}>
         <Stack gap="lg">
           <Title order={1} size="h2">Register</Title>

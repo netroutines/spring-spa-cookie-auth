@@ -73,7 +73,7 @@ export default function DashboardPage() {
 
   return (
     <>
-      <title>Dashboard | My Agenda</title>
+      <title>Dashboard | Spring SPA Cookie Authentication</title>
       <Stack gap="lg" py="xl" align="flex-start">
         <Title order={1}>Dashboard</Title>
         {loading && (
